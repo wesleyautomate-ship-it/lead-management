@@ -9,6 +9,15 @@ const getEnvVar = (name: string): string | null => {
   return value && value.length > 0 ? value : null;
 };
 
+const getEnvFlag = (name: string, defaultValue: boolean): boolean => {
+  const value = getEnvVar(name);
+  if (!value) {
+    return defaultValue;
+  }
+
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
+};
+
 const toHex = (bytes: Uint8Array): string => {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 };
@@ -152,37 +161,44 @@ Deno.serve(async (req) => {
     );
   }
 
+  const requireTimestamp = getEnvFlag("PF_WEBHOOK_REQUIRE_TIMESTAMP", false);
   const providedTimestamp = getProvidedTimestamp(req);
-  if (!providedTimestamp) {
+  if (!providedTimestamp && requireTimestamp) {
     return new Response(
       JSON.stringify({ ok: false, error: "missing_timestamp" }),
       { status: 401, headers: JSON_HEADERS },
     );
   }
 
-  const timestampMs = parseTimestampMs(providedTimestamp);
-  if (!timestampMs) {
-    return new Response(
-      JSON.stringify({ ok: false, error: "invalid_timestamp" }),
-      { status: 401, headers: JSON_HEADERS },
-    );
-  }
+  if (providedTimestamp) {
+    const timestampMs = parseTimestampMs(providedTimestamp);
+    if (!timestampMs) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "invalid_timestamp" }),
+        { status: 401, headers: JSON_HEADERS },
+      );
+    }
 
-  const maxAgeSecRaw = getEnvVar("PF_WEBHOOK_MAX_AGE_SECONDS");
-  const maxAgeSec = maxAgeSecRaw ? Number(maxAgeSecRaw) : 300;
-  if (!Number.isFinite(maxAgeSec) || maxAgeSec <= 0) {
-    console.error("Invalid PF_WEBHOOK_MAX_AGE_SECONDS", { maxAgeSecRaw });
-    return new Response(
-      JSON.stringify({ ok: false, error: "server_misconfigured" }),
-      { status: 500, headers: JSON_HEADERS },
-    );
-  }
+    const maxAgeSecRaw = getEnvVar("PF_WEBHOOK_MAX_AGE_SECONDS");
+    const maxAgeSec = maxAgeSecRaw ? Number(maxAgeSecRaw) : 300;
+    if (!Number.isFinite(maxAgeSec) || maxAgeSec <= 0) {
+      console.error("Invalid PF_WEBHOOK_MAX_AGE_SECONDS", { maxAgeSecRaw });
+      return new Response(
+        JSON.stringify({ ok: false, error: "server_misconfigured" }),
+        { status: 500, headers: JSON_HEADERS },
+      );
+    }
 
-  const ageMs = Math.abs(Date.now() - timestampMs);
-  if (ageMs > maxAgeSec * 1000) {
-    return new Response(
-      JSON.stringify({ ok: false, error: "stale_timestamp" }),
-      { status: 401, headers: JSON_HEADERS },
+    const ageMs = Math.abs(Date.now() - timestampMs);
+    if (ageMs > maxAgeSec * 1000) {
+      return new Response(
+        JSON.stringify({ ok: false, error: "stale_timestamp" }),
+        { status: 401, headers: JSON_HEADERS },
+      );
+    }
+  } else {
+    console.warn(
+      "PF webhook timestamp missing. Replay window validation skipped.",
     );
   }
 

@@ -119,13 +119,16 @@ Behavior:
      - `x-propertyfinder-signature`
      - `x-signature`
    - Accepts HMAC SHA-256 in hex (or `sha256=<hex>`) and base64
-3. Validates request timestamp (anti-replay)
+3. Validates request timestamp (anti-replay) when present
    - Header priority:
-     - `PF_WEBHOOK_TIMESTAMP_HEADER` env (default `x-pf-timestamp`)
-     - `x-pf-timestamp`
-     - `x-timestamp`
+      - `PF_WEBHOOK_TIMESTAMP_HEADER` env (default `x-pf-timestamp`)
+      - `x-pf-timestamp`
+      - `x-timestamp`
    - Allowed skew window from current time:
-     - `PF_WEBHOOK_MAX_AGE_SECONDS` env (default `300`)
+      - `PF_WEBHOOK_MAX_AGE_SECONDS` env (default `300`)
+   - Enforcement:
+      - `PF_WEBHOOK_REQUIRE_TIMESTAMP=true` -> reject missing timestamp (`401`)
+      - default (`false`) -> allow missing timestamp and log warning
 4. Parses JSON payload
 5. Detects event id in this order:
    - `eventId`
@@ -197,9 +200,10 @@ Keep secrets in `.env.local` locally and push relevant values to Supabase Functi
 - `PF_API_KEY`
 - `PF_API_SECRET`
 - `PF_WEBHOOK_SECRET`
-- `PF_WEBHOOK_SIGNATURE_HEADER` (optional, default `x-pf-signature`)
+- `PF_WEBHOOK_SIGNATURE_HEADER` (optional, default `x-pf-signature`; recommended `x-signature` for PF docs)
 - `PF_WEBHOOK_TIMESTAMP_HEADER` (optional, default `x-pf-timestamp`)
 - `PF_WEBHOOK_MAX_AGE_SECONDS` (optional, default `300`)
+- `PF_WEBHOOK_REQUIRE_TIMESTAMP` (optional, default `false`; set `true` in production once PF timestamp header is confirmed)
 
 ### 5.2 Zoho
 
