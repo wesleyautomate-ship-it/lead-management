@@ -111,7 +111,14 @@ Indexes:
 Behavior:
 
 1. Accepts `POST` only
-2. Parses JSON payload
+2. Validates request signature using `PF_WEBHOOK_SECRET`
+   - Header priority:
+     - `PF_WEBHOOK_SIGNATURE_HEADER` env (default `x-pf-signature`)
+     - `x-pf-signature`
+     - `x-propertyfinder-signature`
+     - `x-signature`
+   - Accepts HMAC SHA-256 in hex (or `sha256=<hex>`) and base64
+3. Parses JSON payload
 3. Detects event id in this order:
    - `eventId`
    - `event_id`
@@ -126,7 +133,7 @@ Behavior:
 Current test mode:
 
 - Deployed with `--no-verify-jwt`
-- Tests intentionally call without `Authorization` header
+- Tests call without `Authorization` header, but signature header is required
 
 ### 4.2 `jobs-worker`
 
@@ -302,7 +309,7 @@ Invoke-RestMethod -Method POST `
 
 Store returned `refresh_token` in `.env.local`.
 
-## 8) End-to-End Test (No Authorization Header)
+## 8) End-to-End Test (Signed Webhook, No Authorization Header)
 
 Prerequisites:
 
@@ -341,9 +348,14 @@ $body = @"
 }
 "@
 
+$secretBytes = [Text.Encoding]::UTF8.GetBytes($env:PF_WEBHOOK_SECRET)
+$bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
+$hmac = New-Object System.Security.Cryptography.HMACSHA256($secretBytes)
+$signature = ([BitConverter]::ToString($hmac.ComputeHash($bodyBytes))).Replace('-', '').ToLower()
+
 Invoke-RestMethod -Method POST `
   -Uri $pfWebhookUrl `
-  -Headers @{ "Content-Type" = "application/json" } `
+  -Headers @{ "Content-Type" = "application/json"; "x-pf-signature" = $signature } `
   -Body $body
 
 Invoke-RestMethod -Method POST `
@@ -584,7 +596,7 @@ Invoke-RestMethod -Method GET `
 
 This has been verified end-to-end:
 
-1. `pf-webhook` accepts realistic payload with no Authorization header
+1. `pf-webhook` accepts realistic payload with valid signature and no Authorization header
 2. `jobs-worker` processes queued `pf_lead_received`
 3. Zoho lead is created and assigned to resolved owner
 4. `leads_map` row is inserted

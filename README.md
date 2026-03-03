@@ -99,9 +99,14 @@ $body = @"
 }
 "@
 
+$secret = [Text.Encoding]::UTF8.GetBytes($env:PF_WEBHOOK_SECRET)
+$bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
+$hmac = New-Object System.Security.Cryptography.HMACSHA256($secret)
+$signature = ([BitConverter]::ToString($hmac.ComputeHash($bodyBytes))).Replace('-', '').ToLower()
+
 Invoke-RestMethod -Method POST `
   -Uri $pfWebhookUrl `
-  -Headers @{ "Content-Type" = "application/json" } `
+  -Headers @{ "Content-Type" = "application/json"; "x-pf-signature" = $signature } `
   -Body $body
 ```
 
