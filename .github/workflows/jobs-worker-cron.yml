@@ -1,0 +1,54 @@
+name: jobs-worker-cron
+
+on:
+  schedule:
+    # GitHub Actions scheduled workflows run at minimum every 5 minutes.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  trigger-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate required secrets
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          WORKER_CRON_SECRET: ${{ secrets.WORKER_CRON_SECRET }}
+        run: |
+          if [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::Missing repository secret SUPABASE_PROJECT_REF"
+            exit 1
+          fi
+          if [ -z "$WORKER_CRON_SECRET" ]; then
+            echo "::error::Missing repository secret WORKER_CRON_SECRET"
+            exit 1
+          fi
+
+      - name: Trigger jobs-worker every minute for 5 minutes
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          WORKER_CRON_SECRET: ${{ secrets.WORKER_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          worker_url="https://${SUPABASE_PROJECT_REF}.functions.supabase.co/jobs-worker"
+
+          for i in 1 2 3 4 5; do
+            echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] Trigger ${i}/5 -> ${worker_url}"
+            http_code=$(curl -sS -o response.json -w "%{http_code}" \
+              -X POST "${worker_url}" \
+              -H "Content-Type: application/json" \
+              -H "X-Cron-Secret: ${WORKER_CRON_SECRET}" \
+              -d '{}')
+
+            cat response.json
+            echo
+
+            if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+              echo "::error::jobs-worker returned HTTP ${http_code}"
+              exit 1
+            fi
+
+            if [ "$i" -lt 5 ]; then
+              sleep 60
+            fi
+          done
