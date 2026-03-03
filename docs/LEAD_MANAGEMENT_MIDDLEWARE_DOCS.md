@@ -118,17 +118,26 @@ Behavior:
      - `x-propertyfinder-signature`
      - `x-signature`
    - Accepts HMAC SHA-256 in hex (or `sha256=<hex>`) and base64
-3. Parses JSON payload
-3. Detects event id in this order:
+3. Validates request timestamp (anti-replay)
+   - Header priority:
+     - `PF_WEBHOOK_TIMESTAMP_HEADER` env (default `x-pf-timestamp`)
+     - `x-pf-timestamp`
+     - `x-timestamp`
+   - Allowed skew window from current time:
+     - `PF_WEBHOOK_MAX_AGE_SECONDS` env (default `300`)
+4. Parses JSON payload
+5. Detects event id in this order:
    - `eventId`
    - `event_id`
    - `id`
    - generated UUID fallback
-4. Inserts job:
+6. Checks duplicate event id in `jobs.payload_json.eventId`
+   - If already exists, returns `{ ok: true, duplicate: true }`
+7. Inserts job (new events only):
    - `type = 'pf_lead_received'`
    - `status = 'queued'`
    - `payload_json = { eventId, raw }`
-5. Returns `{ ok: true }` on success
+8. Returns `{ ok: true }` on success
 
 Current test mode:
 
@@ -187,6 +196,9 @@ Keep secrets in `.env.local` locally and push relevant values to Supabase Functi
 - `PF_API_KEY`
 - `PF_API_SECRET`
 - `PF_WEBHOOK_SECRET`
+- `PF_WEBHOOK_SIGNATURE_HEADER` (optional, default `x-pf-signature`)
+- `PF_WEBHOOK_TIMESTAMP_HEADER` (optional, default `x-pf-timestamp`)
+- `PF_WEBHOOK_MAX_AGE_SECONDS` (optional, default `300`)
 
 ### 5.2 Zoho
 
@@ -352,10 +364,11 @@ $secretBytes = [Text.Encoding]::UTF8.GetBytes($env:PF_WEBHOOK_SECRET)
 $bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
 $hmac = New-Object System.Security.Cryptography.HMACSHA256($secretBytes)
 $signature = ([BitConverter]::ToString($hmac.ComputeHash($bodyBytes))).Replace('-', '').ToLower()
+$timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 Invoke-RestMethod -Method POST `
   -Uri $pfWebhookUrl `
-  -Headers @{ "Content-Type" = "application/json"; "x-pf-signature" = $signature } `
+  -Headers @{ "Content-Type" = "application/json"; "x-pf-signature" = $signature; "x-pf-timestamp" = "$timestamp" } `
   -Body $body
 
 Invoke-RestMethod -Method POST `

@@ -103,10 +103,11 @@ $secret = [Text.Encoding]::UTF8.GetBytes($env:PF_WEBHOOK_SECRET)
 $bodyBytes = [Text.Encoding]::UTF8.GetBytes($body)
 $hmac = New-Object System.Security.Cryptography.HMACSHA256($secret)
 $signature = ([BitConverter]::ToString($hmac.ComputeHash($bodyBytes))).Replace('-', '').ToLower()
+$timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 Invoke-RestMethod -Method POST `
   -Uri $pfWebhookUrl `
-  -Headers @{ "Content-Type" = "application/json"; "x-pf-signature" = $signature } `
+  -Headers @{ "Content-Type" = "application/json"; "x-pf-signature" = $signature; "x-pf-timestamp" = "$timestamp" } `
   -Body $body
 ```
 

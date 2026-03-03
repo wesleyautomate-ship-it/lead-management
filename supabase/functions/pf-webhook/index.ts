@@ -58,6 +58,44 @@ const getProvidedSignature = (req: Request): string | null => {
   return null;
 };
 
+const getProvidedTimestamp = (req: Request): string | null => {
+  const configuredHeader = getEnvVar("PF_WEBHOOK_TIMESTAMP_HEADER") ??
+    "x-pf-timestamp";
+  const fallbackHeaders = [
+    configuredHeader,
+    "x-pf-timestamp",
+    "x-timestamp",
+  ];
+
+  for (const headerName of new Set(fallbackHeaders)) {
+    const value = req.headers.get(headerName);
+    if (value && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+};
+
+const parseTimestampMs = (value: string): number | null => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    // 10-digit unix timestamp (seconds)
+    if (numeric < 1e11) {
+      return Math.trunc(numeric * 1000);
+    }
+    // 13-digit unix timestamp (milliseconds)
+    return Math.trunc(numeric);
+  }
+
+  const parsed = Date.parse(value);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  return null;
+};
+
 const buildExpectedSignatures = async (
   secret: string,
   body: string,
@@ -114,6 +152,40 @@ Deno.serve(async (req) => {
     );
   }
 
+  const providedTimestamp = getProvidedTimestamp(req);
+  if (!providedTimestamp) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "missing_timestamp" }),
+      { status: 401, headers: JSON_HEADERS },
+    );
+  }
+
+  const timestampMs = parseTimestampMs(providedTimestamp);
+  if (!timestampMs) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "invalid_timestamp" }),
+      { status: 401, headers: JSON_HEADERS },
+    );
+  }
+
+  const maxAgeSecRaw = getEnvVar("PF_WEBHOOK_MAX_AGE_SECONDS");
+  const maxAgeSec = maxAgeSecRaw ? Number(maxAgeSecRaw) : 300;
+  if (!Number.isFinite(maxAgeSec) || maxAgeSec <= 0) {
+    console.error("Invalid PF_WEBHOOK_MAX_AGE_SECONDS", { maxAgeSecRaw });
+    return new Response(
+      JSON.stringify({ ok: false, error: "server_misconfigured" }),
+      { status: 500, headers: JSON_HEADERS },
+    );
+  }
+
+  const ageMs = Math.abs(Date.now() - timestampMs);
+  if (ageMs > maxAgeSec * 1000) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "stale_timestamp" }),
+      { status: 401, headers: JSON_HEADERS },
+    );
+  }
+
   let rawBody = "";
   try {
     rawBody = await req.text();
@@ -162,6 +234,34 @@ Deno.serve(async (req) => {
     const supabase = createClient(supabaseUrl, serviceRoleKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+
+    const { data: existingJob, error: existingJobLookupError } = await supabase
+      .from("jobs")
+      .select("id, status, created_at")
+      .contains("payload_json", { eventId })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingJobLookupError) {
+      throw existingJobLookupError;
+    }
+
+    if (existingJob) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          duplicate: true,
+          eventId,
+          job_id: existingJob.id,
+          status: existingJob.status,
+        }),
+        {
+          status: 200,
+          headers: JSON_HEADERS,
+        },
+      );
+    }
 
     const { error } = await supabase.from("jobs").insert({
       type: "pf_lead_received",
