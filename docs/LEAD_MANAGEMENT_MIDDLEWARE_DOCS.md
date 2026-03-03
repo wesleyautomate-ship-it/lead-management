@@ -140,11 +140,15 @@ Behavior summary:
    - updates `jobs.status='success'`
    - writes rich `result_json`
 6. On failure:
-   - sets `jobs.status='queued'`
    - increments `attempts`
-   - sets `run_after = now + 5 minutes`
-   - writes `last_error`
-   - sets `result_json = { action: 'failed' }`
+   - if attempts are below `max_attempts`:
+     - sets `jobs.status='queued'`
+     - sets `run_after = now + 5 minutes`
+     - writes `result_json.action = 'failed_retry'`
+   - if attempts reach `max_attempts`:
+     - sets `jobs.status='failed'` (terminal)
+     - writes `result_json.action = 'failed_permanent'`
+   - writes `last_error` in both cases
 
 Zoho-specific behavior:
 
@@ -483,9 +487,9 @@ Invoke-RestMethod -Method POST -Uri $workerUrl -Headers @{ "Content-Type" = "app
 
 Current policy:
 
-- On failure, retry in 5 minutes.
+- On failure, retry in 5 minutes while `attempts < max_attempts`.
 - `attempts` increments on every failure.
-- Worker currently requeues without hard-stop on `max_attempts` (future hardening recommended).
+- When `attempts >= max_attempts`, job is moved to terminal `failed`.
 
 ### 11.3 Monitoring focus
 
@@ -543,10 +547,8 @@ GitHub path:
 `jobs-worker` now supports header `x-cron-secret`:
 
 - Valid header secret: allowed
-- Invalid header secret: `401 invalid_cron_secret`
-- Missing header: allowed (test mode), warning logged
-
-This is intentionally permissive for current testing stage.
+- Invalid or missing header secret: `401 invalid_cron_secret`
+- Missing `WORKER_CRON_SECRET` in function env: `500 server_misconfigured`
 
 ### 13.5 Verify scheduler works without manual worker call
 

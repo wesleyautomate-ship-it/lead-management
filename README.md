@@ -49,15 +49,13 @@ Path:
 
 - `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`
 
-## jobs-worker Trigger Protection (Current Test Mode)
+## jobs-worker Trigger Protection
 
 `jobs-worker` now checks header `x-cron-secret`:
 
-- If header is present and matches `WORKER_CRON_SECRET`: allowed
-- If header is present and does not match: `401 invalid_cron_secret`
-- If header is missing: allowed for now, with warning log
-
-This keeps test flow unblocked while adding minimal protection for automated triggers.
+- If `WORKER_CRON_SECRET` is missing in function env: `500 server_misconfigured`
+- If header is missing or invalid: `401 invalid_cron_secret`
+- If header matches `WORKER_CRON_SECRET`: allowed
 
 ## Deploy Flow
 

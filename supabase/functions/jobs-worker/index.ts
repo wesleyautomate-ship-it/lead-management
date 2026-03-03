@@ -476,16 +476,16 @@ Deno.serve(async (req) => {
   const expectedCronSecret = Deno.env.get("WORKER_CRON_SECRET")?.trim();
   const providedCronSecret = req.headers.get("x-cron-secret")?.trim();
 
-  if (!providedCronSecret) {
-    console.warn(
-      "jobs-worker called without x-cron-secret header; allowing in test mode",
+  if (!expectedCronSecret) {
+    console.error("Missing WORKER_CRON_SECRET");
+    return new Response(
+      JSON.stringify({ ok: false, error: "server_misconfigured" }),
+      { status: 500, headers: JSON_HEADERS },
     );
-  } else if (!expectedCronSecret) {
-    console.warn(
-      "x-cron-secret header provided but WORKER_CRON_SECRET is not configured; allowing in test mode",
-    );
-  } else if (providedCronSecret !== expectedCronSecret) {
-    console.warn("jobs-worker called with invalid x-cron-secret");
+  }
+
+  if (!providedCronSecret || providedCronSecret !== expectedCronSecret) {
+    console.warn("jobs-worker called with missing or invalid x-cron-secret");
     return new Response(
       JSON.stringify({ ok: false, error: "invalid_cron_secret" }),
       { status: 401, headers: JSON_HEADERS },
@@ -596,28 +596,57 @@ Deno.serve(async (req) => {
       } catch (error) {
         failed += 1;
 
-        const retryAt = new Date(Date.now() + RETRY_DELAY_MS).toISOString();
         const attempts = (job.attempts ?? 0) + 1;
+        const maxAttempts = Number(job.max_attempts) > 0
+          ? Number(job.max_attempts)
+          : 10;
+        const isTerminalFailure = attempts >= maxAttempts;
+        const retryAt = new Date(Date.now() + RETRY_DELAY_MS).toISOString();
         const errorMessage = toErrorMessage(error).slice(0, 4000);
 
-        const { error: retryError } = await supabase
-          .from("jobs")
-          .update({
+        const updatePatch = isTerminalFailure
+          ? {
+            attempts,
+            status: "failed",
+            run_after: new Date().toISOString(),
+            last_error: errorMessage,
+            result_json: {
+              action: "failed_permanent",
+              attempts,
+              max_attempts: maxAttempts,
+            },
+            locked_at: null,
+            locked_by: null,
+            updated_at: new Date().toISOString(),
+          }
+          : {
             attempts,
             status: "queued",
             run_after: retryAt,
             last_error: errorMessage,
-            result_json: { action: "failed" },
+            result_json: { action: "failed_retry", attempts, max_attempts: maxAttempts },
             locked_at: null,
             locked_by: null,
             updated_at: new Date().toISOString(),
-          })
-          .eq("id", job.id);
+          };
 
-        if (retryError) {
-          console.error("Failed to requeue job", {
+        const { error: updateError } = await supabase
+          .from("jobs")
+          .update(updatePatch)
+          .eq("id", job.id)
+          .eq("status", "processing");
+
+        if (updateError) {
+          console.error("Failed to update failed job state", {
             jobId: job.id,
-            retryError,
+            updateError,
+          });
+        } else if (isTerminalFailure) {
+          console.error("Job moved to terminal failed status", {
+            jobId: job.id,
+            attempts,
+            maxAttempts,
+            errorMessage,
           });
         }
       }
