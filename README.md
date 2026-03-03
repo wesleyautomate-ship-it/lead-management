@@ -12,6 +12,7 @@ Detailed project docs:
 - `supabase/functions/pf-webhook/` webhook ingestion function
 - `supabase/functions/jobs-worker/` queued jobs worker
 - `.github/workflows/jobs-worker-cron.yml` scheduler workflow
+- `.github/workflows/jobs-monitoring-alerts.yml` monitoring workflow
 
 ## Scheduling Strategy
 
@@ -44,6 +45,7 @@ In GitHub repository settings, add:
 
 1. `SUPABASE_PROJECT_REF`
 2. `WORKER_CRON_SECRET`
+3. `SUPABASE_SERVICE_ROLE_KEY` (required for monitoring workflow)
 
 Path:
 
@@ -128,3 +130,26 @@ Invoke-RestMethod -Method GET `
   -Uri "$restBase/rest/v1/leads_map?select=pf_event_id,pf_reference,zoho_lead_id,created_at&order=created_at.desc&limit=10" `
   -Headers $headers
 ```
+
+## Queue Monitoring Alerts
+
+This repo includes a scheduled health-check workflow:
+
+- File: `.github/workflows/jobs-monitoring-alerts.yml`
+- Schedule: every 10 minutes
+- Data source: monitoring SQL views in `public` schema
+  - `v_jobs_status_counts`
+  - `v_jobs_retry_or_failed`
+  - `v_jobs_error_top_24h`
+  - `v_jobs_stuck_processing`
+
+Alert behavior:
+
+- Workflow fails when retry/failed job count is above threshold.
+- Workflow fails when stuck processing job count is above threshold.
+- A failed run appears in GitHub Actions and can be connected to notifications.
+
+Threshold defaults (in workflow env):
+
+- `ALERT_RETRY_OR_FAILED_THRESHOLD=0`
+- `ALERT_STUCK_THRESHOLD=0`

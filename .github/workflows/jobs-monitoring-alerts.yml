@@ -1,0 +1,90 @@
+name: jobs-monitoring-alerts
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  monitor-jobs:
+    runs-on: ubuntu-latest
+    env:
+      ALERT_RETRY_OR_FAILED_THRESHOLD: "0"
+      ALERT_STUCK_THRESHOLD: "0"
+    steps:
+      - name: Validate required secrets
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_PROJECT_REF" ]; then
+            echo "::error::Missing repository secret SUPABASE_PROJECT_REF"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Missing repository secret SUPABASE_SERVICE_ROLE_KEY"
+            exit 1
+          fi
+
+      - name: Query jobs health views
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          api_base="https://${SUPABASE_PROJECT_REF}.supabase.co/rest/v1"
+
+          get_exact_count() {
+            local view_name="$1"
+            local headers_file
+            headers_file="$(mktemp)"
+
+            curl -sS -D "$headers_file" -o /dev/null \
+              -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+              -H "Prefer: count=exact" \
+              "${api_base}/${view_name}?select=id&limit=1"
+
+            local content_range
+            content_range="$(tr -d '\r' < "$headers_file" | awk -F': ' 'tolower($1)=="content-range"{print $2}' | tail -n1)"
+            rm -f "$headers_file"
+
+            if [ -z "$content_range" ]; then
+              echo "0"
+              return
+            fi
+
+            echo "${content_range##*/}"
+          }
+
+          retry_or_failed_count="$(get_exact_count "v_jobs_retry_or_failed")"
+          stuck_processing_count="$(get_exact_count "v_jobs_stuck_processing")"
+
+          echo "retry_or_failed_count=${retry_or_failed_count}"
+          echo "stuck_processing_count=${stuck_processing_count}"
+
+          echo "status_counts:"
+          curl -sS \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            "${api_base}/v_jobs_status_counts?select=status,jobs_count,oldest_run_after,latest_updated_at&order=status.asc"
+          echo
+
+          echo "top_errors_24h:"
+          curl -sS \
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+            "${api_base}/v_jobs_error_top_24h?select=error_code,occurrences,last_seen_at&limit=10"
+          echo
+
+          if [ "$retry_or_failed_count" -gt "$ALERT_RETRY_OR_FAILED_THRESHOLD" ]; then
+            echo "::error::Detected ${retry_or_failed_count} retry/failed jobs (threshold ${ALERT_RETRY_OR_FAILED_THRESHOLD})"
+            exit 1
+          fi
+
+          if [ "$stuck_processing_count" -gt "$ALERT_STUCK_THRESHOLD" ]; then
+            echo "::error::Detected ${stuck_processing_count} stuck processing jobs (threshold ${ALERT_STUCK_THRESHOLD})"
+            exit 1
+          fi
+
+          echo "Queue health is within thresholds."

@@ -29,6 +29,7 @@ lead-management/
       20260302190000_backfill_jobs_columns.sql
       20260302195000_leads_map_idempotency.sql
       20260302195100_listings_map_backfill.sql
+      20260303120000_ops_monitoring_views.sql
     functions/
       pf-webhook/index.ts
       jobs-worker/index.ts
@@ -614,3 +615,79 @@ This has been verified end-to-end:
 3. Zoho lead is created and assigned to resolved owner
 4. `leads_map` row is inserted
 5. `jobs.result_json.action` is `"created"`
+
+## 15) Monitoring and Alerting
+
+### 15.1 Monitoring SQL views
+
+Migration:
+
+- `supabase/migrations/20260303120000_ops_monitoring_views.sql`
+
+Views created:
+
+1. `public.v_jobs_status_counts`
+2. `public.v_jobs_retry_or_failed`
+3. `public.v_jobs_error_top_24h`
+4. `public.v_jobs_stuck_processing`
+
+Purpose:
+
+- Fast operational visibility into queue health
+- Reliable source for GitHub Actions alerts
+
+### 15.2 GitHub alert workflow
+
+Workflow file:
+
+- `.github/workflows/jobs-monitoring-alerts.yml`
+
+Schedule:
+
+- Every 10 minutes
+
+Required GitHub secrets:
+
+1. `SUPABASE_PROJECT_REF`
+2. `SUPABASE_SERVICE_ROLE_KEY`
+
+GitHub path:
+
+- `Settings` -> `Secrets and variables` -> `Actions`
+
+### 15.3 Alert rule behavior
+
+The workflow queries monitoring views over Supabase REST API and fails the run when:
+
+1. `v_jobs_retry_or_failed` count is greater than `ALERT_RETRY_OR_FAILED_THRESHOLD` (default `0`)
+2. `v_jobs_stuck_processing` count is greater than `ALERT_STUCK_THRESHOLD` (default `0`)
+
+Practical result:
+
+- A failed workflow run acts as an operational alert and appears in Actions notifications.
+
+### 15.4 Manual monitoring queries (PowerShell)
+
+```powershell
+$restBase = "https://$($env:SUPABASE_PROJECT_REF).supabase.co"
+$headers = @{
+  apikey = $env:SUPABASE_SERVICE_ROLE_KEY
+  Authorization = "Bearer $($env:SUPABASE_SERVICE_ROLE_KEY)"
+}
+
+Invoke-RestMethod -Method GET `
+  -Uri "$restBase/rest/v1/v_jobs_status_counts?select=status,jobs_count,oldest_run_after,latest_updated_at&order=status.asc" `
+  -Headers $headers
+
+Invoke-RestMethod -Method GET `
+  -Uri "$restBase/rest/v1/v_jobs_retry_or_failed?select=id,type,status,attempts,max_attempts,last_error,updated_at&order=updated_at.desc&limit=20" `
+  -Headers $headers
+
+Invoke-RestMethod -Method GET `
+  -Uri "$restBase/rest/v1/v_jobs_error_top_24h?select=error_code,occurrences,last_seen_at&limit=20" `
+  -Headers $headers
+
+Invoke-RestMethod -Method GET `
+  -Uri "$restBase/rest/v1/v_jobs_stuck_processing?select=id,type,status,attempts,locked_at,processing_age&order=locked_at.asc&limit=20" `
+  -Headers $headers
+```
