@@ -39,7 +39,7 @@ jobs:
             local headers_file
             headers_file="$(mktemp)"
 
-            curl -sS -D "$headers_file" -o /dev/null \
+            curl -fsS -D "$headers_file" -o /dev/null \
               -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
               -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
               -H "Prefer: count=exact" \
@@ -64,14 +64,14 @@ jobs:
           echo "stuck_processing_count=${stuck_processing_count}"
 
           echo "status_counts:"
-          curl -sS \
+          curl -fsS \
             -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
             "${api_base}/v_jobs_status_counts?select=status,jobs_count,oldest_run_after,latest_updated_at&order=status.asc"
           echo
 
           echo "top_errors_24h:"
-          curl -sS \
+          curl -fsS \
             -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
             "${api_base}/v_jobs_error_top_24h?select=error_code,occurrences,last_seen_at&limit=10"

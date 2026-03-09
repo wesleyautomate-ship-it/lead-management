@@ -13,10 +13,15 @@ jobs:
       - name: Validate required secrets
         env:
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           WORKER_CRON_SECRET: ${{ secrets.WORKER_CRON_SECRET }}
         run: |
           if [ -z "$SUPABASE_PROJECT_REF" ]; then
             echo "::error::Missing repository secret SUPABASE_PROJECT_REF"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Missing repository secret SUPABASE_SERVICE_ROLE_KEY"
             exit 1
           fi
           if [ -z "$WORKER_CRON_SECRET" ]; then
@@ -27,6 +32,7 @@ jobs:
       - name: Trigger jobs-worker every minute for 5 minutes
         env:
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           WORKER_CRON_SECRET: ${{ secrets.WORKER_CRON_SECRET }}
         run: |
           set -euo pipefail
@@ -37,6 +43,7 @@ jobs:
             http_code=$(curl -sS -o response.json -w "%{http_code}" \
               -X POST "${worker_url}" \
               -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
               -H "X-Cron-Secret: ${WORKER_CRON_SECRET}" \
               -d '{}')
 
